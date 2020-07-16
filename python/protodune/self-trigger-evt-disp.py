@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import argparse
 import re
 import arrow
+import sys
 import os.path
 
 def plot_with_hits(ax, s, hits=None, minmax=100, use_channel_number=True):
@@ -16,7 +17,7 @@ def plot_with_hits(ax, s, hits=None, minmax=100, use_channel_number=True):
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--filename", required=True, help="Input file name")
+    parser.add_argument("--filenames", required=True, nargs="+", type=str, metavar="FILE")
     parser.add_argument("--apas", default=None,
                         help="Comma-separated list of APAs to show")
     parser.add_argument("--cmax", default=20, type=float,
@@ -26,19 +27,78 @@ if __name__=="__main__":
     parser.add_argument("--tmax", default=None, type=float,
                         help="Maximum value of time to show, in ticks since first time in file")
     parser.add_argument("--show-hits", action="store_true",
-                        help='Show hits from a file with the same name as --filename, but with "waveform" replaced by "hits"' )
+                        help='Show hits from a file with the same name as --filenames, but with "waveform" replaced by "hits"' )
     parser.add_argument("--batch", action="store_true",
                         help="Don't display anything on screen (useful if saving many event displays to file")
     parser.add_argument("--save-name", default=None,
                         help="Name of image file to save event display to")
     parser.add_argument("--format", default="offline", choices=["online", "offline"])
-    
+
     parser.add_argument("--collection-only", action="store_true",
                         help="Only show collection view")
     parser.add_argument("--figsize", nargs=2, default=[6.4, 4.8], metavar=("width", "height"),
                         help="Set width and height of figure, if saved")
+
+
     args=parser.parse_args()
-    a=np.load(args.filename) if args.filename.endswith("npy") else np.loadtxt(args.filename).astype(np.int32)
+
+    files=[]
+
+    if args.format=="online":
+        time_start=[]
+        time_end=[]
+        lines_start=[]
+        skiprows=[]
+
+        for f in args.filenames:
+            with open(f) as this_file:
+                count=0
+                time={}
+                for x in this_file:
+                    if count>0:
+                        num_st = x.split(None, 1)[0]
+                        num_64 = int(num_st, 0)
+                        time[num_64] = count
+                    count+=1
+                    # if count>100:
+                    #     break
+
+                time_start.append(min(time.keys()))
+                time_end  .append(max(time.keys()))
+                lines_start.append(time)
+
+        time_start = max(time_start)
+        time_end = min(time_end)
+        print("Time start is for all the files is:", hex(time_start))
+        print("Time end is for all the files is:", hex(time_end))
+        if time_start > time_end:
+            print("Start time > end time. This means the intersection of the times in the files is null, so there's nothing to display. Exiting")
+            sys.exit(1)
+
+        for i,f in enumerate(args.filenames):
+            print(i,f)
+            print(min(lines_start[i].keys()))
+            array = np.loadtxt(f).astype(np.int32)
+
+            start_at = lines_start[i][time_start]
+            end_at = lines_start[i][time_end]
+
+            if (end_at+1<array.shape[0]):
+                print("ignoring lines", end_at,"to", array.shape[0],"for file",f,"for time sync")
+                array = np.delete(array, range(end_at+1,array.shape[0]), 0)
+
+            if (start_at>1):
+                print("ignoring lines 1 to", start_at,"for file",f,"for time sync")
+                array = np.delete(array, range(1,start_at),0)
+
+            files.append(array)
+
+    else:
+        for f in args.filenames:
+            if f.endswith("npy"):
+                files.append(np.load(f))
+            else:
+                files.append(np.loadtxt(f).astype(np.int32))
 
     # "Offline" format has a channel per row, with the first column
     # being the event number, and the second column being the channel
@@ -47,12 +107,21 @@ if __name__=="__main__":
     # "offline" format, so we just munge online arrays to look like
     # offline arrays right at the start: transpose, remove the
     # timestamp column, and add a fake "event number" column
-    if args.format=="online":
-        tmp=a.T[1:]
-        z=np.zeros((tmp.shape[0],1), dtype=np.int32)
-        a=np.hstack((z,tmp))
+    chans = np.array([])
 
-    chans=a[:,1]
+    if args.format=="online":
+        for i,f in enumerate(files):
+            tmp=f.T[1:]
+            z=np.zeros((tmp.shape[0],1), dtype=np.int32)
+            a1=np.hstack((z,tmp))
+
+            chans=np.append(chans,a1[:,1])
+
+            if i==0:
+                a = a1
+            else:
+                a=np.concatenate((a,a1))
+
 
     if args.apas:
         apas=[int(x) for x in args.apas.split(",")]
@@ -66,11 +135,11 @@ if __name__=="__main__":
                                                                        apa,
                                                                        view,
                                                                        wallorcryo="both" if view=="z" else "both"))
-            
 
-    # Parse the filename for run, evt, timestamp
+
+    # Parse the first filename for run, evt, timestamp
     fname_re=re.compile(r"np04_raw_run([0-9]+)_...._dl.*_waveform_evt([0-9]+)_t(0x[0-9a-f]+)")
-    m=fname_re.search(args.filename)
+    m=fname_re.search(args.filenames[0])
     if m:
         # Apparently python ignores leading zeros,
         # so don't have to worry about
@@ -85,8 +154,11 @@ if __name__=="__main__":
         title=""
 
     if args.show_hits:
-        hits_fname=args.filename.replace("waveform", "hits").replace(".npy", ".txt")
-        hits=np.loadtxt(hits_fname)
+        hits=np.zeros((0,4), dtype=int)
+        for f in args.filenames:
+            hits_fname=f.replace("waveform", "hits").replace(".npy", ".txt")
+            this_hits=np.loadtxt(hits_fname)
+            hits=np.vstack((hits, this_hits))
     else:
         hits=None
 
