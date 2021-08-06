@@ -21,9 +21,11 @@ Output is to text file or numpy format (using
 `extract_larsoft_waveforms --help` for options, and see the source for
 a description of the output format.
 
+The waveforms are accessed through an input tag with the format: [module label]:[product instance name]:[process name] (as returned by eventdump).
+
 ### `extract_larsoft_hits.cxx`
 
-Extracts hits from a larsoft file into a flat text file, much like `extract_larsoft_waveforms` does for raw data
+Extracts hits from a larsoft file into a flat text file, much like `extract_larsoft_waveforms` does for raw data.
 
 ### `read_samples.h`
 
